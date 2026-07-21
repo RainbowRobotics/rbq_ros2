@@ -1,0 +1,80 @@
+name: build (Humble)
+
+# Two gates:
+#   colcon    — builds + lints the workspace in ros:humble. Because ros-base already
+#               has the common ROS packages installed, this catches compile/lint errors
+#               but NOT every undeclared-dependency case (a missing <depend> whose package
+#               happens to be pre-installed still resolves here).
+#   rosdebian — the buildfarm-equivalent gate: builds each package as a .deb with bloom,
+#               resolving dependencies from package.xml ONLY. This is what actually catches
+#               an undeclared dependency before build.ros2.org does.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  colcon:
+    runs-on: ubuntu-latest
+    container:
+      image: ros:humble
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/rbq_ros2
+
+      - name: rosdep install
+        shell: bash
+        run: |
+          apt-get update -qq
+          rosdep update --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble
+
+      - name: colcon build
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --event-handlers console_direct+
+
+      - name: colcon test (lint)
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test --event-handlers console_direct+ --return-code-on-test-failure
+
+  rosdebian:
+    name: rosdebian (buildfarm-equivalent, declared deps only)
+    runs-on: ubuntu-latest
+    container:
+      image: ros:humble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install bloom + packaging tools
+        shell: bash
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3-bloom fakeroot debhelper dh-python dpkg-dev
+          rosdep update --rosdistro humble
+
+      - name: build each package as a .deb
+        shell: bash
+        # bloom-generate resolves build deps from package.xml only, so a find_package
+        # with no matching <depend> fails here even though ros-base has the package.
+        # NOTE: single-package pilot. When packages with inter-dependencies are added,
+        # build them in dependency order and apt-install each .deb before the next.
+        run: |
+          source /opt/ros/humble/setup.bash
+          set -e
+          find . -name package.xml -not -path '*/build/*' -print0 | while IFS= read -r -d '' pkgxml; do
+            pkgdir="$(dirname "$pkgxml")"
+            echo "::group::$pkgdir"
+            ( cd "$pkgdir"
+              bloom-generate rosdebian --ros-distro humble
+              fakeroot debian/rules binary )
+            echo "::endgroup::"
+          done
+          echo "Built:"; find . -name 'ros-humble-*.deb' -printf '  %p\n'
