@@ -7,6 +7,7 @@
   <version>1.19.30</version>
   <description>Message definitions for the RBQ quadruped robot</description>
   <maintainer email="gurban@rainbow-robotics.com">Gurban</maintainer>
+  <maintainer email="wonmu.lee@rainbow-robotics.com">Wonmu Lee</maintainer>
   <license>Apache-2.0</license>
   <author>Gurban</author>
 
